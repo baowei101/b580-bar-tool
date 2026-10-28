@@ -284,3 +284,60 @@ sudo /opt/b580-bar-tool/rebar-batch.sh --check     # 期望两行 BAR2 = 16384MB
 | 4 | README 首屏「重启后必须重新 apply」 | **已修** | 表格那行由「当前大小」改为「实测结果」，加醒目提示 + 核对命令；中英两版同步并过 `check-i18n.sh` |
 | 5 | 补一节「BAR 容量对下游框架（SYCL/oneAPI、Vulkan、推理引擎）的影响」 | 待办 | 本文第七节目前只有推断，还没进 README |
 | 6 | 三个 P2 边角（`0x0403` 放行、`pci=realloc=off` 误判、`topo_window_mb` 的 `0x28`） | 待办 | 换主板 / 换卡时才咬人，但咬人很难查 |
+
+---
+
+## 十、仓库协作层：压平快照会把「真源」锁死在远端
+
+### 10.1 症状：每次发版都得 `--force`，普通 push 一律被拒 `[新]`
+
+```
+$ git push github main
+ ! [rejected]  main -> main (non-fast-forward)
+```
+
+原因不是权限，也不是分支保护，而是**两边历史互不相干**：本仓库长期是
+「本地一条演进历史（几十个提交）+ GitHub 上一个孤立提交（压平快照）」，
+两个根提交没有共同祖先，任何普通 push 都是非快进。
+
+压平本身有正当理由——早期提交里带着内网 IP、BDF、绝对路径，压平是最省事的脱敏手段。
+但它有个副作用：**快照一旦推出去就成了公开历史的唯一根**，此后每次发布都得再压一次，
+而且这一层关系只记在人的脑子里，新人 clone 下来会以为仓库只有一个提交、没有历史可查。
+
+### 10.2 2026-10-28 的处理：以远端快照为唯一根，三边归一 `[新]`
+
+```bash
+# 1. 保留完整历史（仅本地，不推）
+git branch archive-full-history-<日期> main
+
+# 2. 让 main 指向远端快照（两者文件树逐字节一致，工作区不会变动）
+git reset --hard <远端快照 sha>
+
+# 3. 重建服务端裸库，推一次（此时是 fast-forward）
+git init --bare -b main <repo>.git && git push origin main
+```
+
+结果：本地 `main` / 服务端裸库 / GitHub **三边 SHA 完全相同**，
+之后任意一边 push 都是普通快进，`git push --dry-run` 两端都返回
+`Everything up-to-date`。完整历史留在本地存档分支，需要考古时 `git log` 即可。
+
+### 10.3 两个必须一起改的配置 `[新]`
+
+**① 仓库级身份必须换成 noreply 邮箱。** 否则 push 到公开仓时会把内网邮箱写进提交元数据：
+
+```bash
+git config --local user.name  <github-用户名>
+git config --local user.email "<数字ID>+<用户名>@users.noreply.github.com"
+```
+
+**② 双远端用一个别名推。** 裸库和 GitHub 内容必须一致，别靠记忆手动跑两次：
+
+```bash
+git config alias.pushall '!git push origin main && git push github main'
+```
+
+### 10.4 教训
+
+**脱敏要在第一次提交之前做完，不要指望事后靠压平来救。** 压平的代价不是一次性的：
+它把「远端快照」抬成了真源，本地历史降级为旁支，之后每次同步都要特殊处理。
+一旦发现已经在压平，就尽早做一次 10.2 那种归一，别让它拖到几十次发布之后。
