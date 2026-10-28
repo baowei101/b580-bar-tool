@@ -231,24 +231,112 @@ ssh -tt baow@<SERVER_IP> "echo '<PASS>' | sudo -S -v; \
 
 ---
 
-## 七、与推理引擎的耦合（本轮新发现，**假设待验证**）
+## 七、与推理引擎的耦合（**2026-10-28 深夜复测：ReBAR 不是根因，原推断已被推翻**）
+
+### 7.1 最初观察到的现象链（历史记录，保留）
 
 BAR 只有 512MB 时，dmesg 显示 `Small BAR device`，**CPU 可访问显存仅约 1GB**；
 扩到 16GB 后变成 11.9GB、`Small BAR` 标记消失。
-
-本轮遇到的问题链：
 
 1. 双 B580 跑 XeStrata（SYCL/XE 双卡 layer split，`--layer-split` 跨卡边界在 **layer 24/25**）
 2. 引擎反复在 **`host at layer step 24/25`** 卡死，`mtp draft: waiting for the GPU -1` → 60 秒 → `FATAL SIGABRT`
 3. 内核里 **卡0 的 `bcs`（拷贝引擎）每秒 page fault**，`Fault response: Unsuccessful -EBUSY`，驱动自动 reset 失败（`state=0x249`）
 4. 回退配置、重绑驱动、PCI FLR 都救不回来；最终 **GuC 固件死锁**（`Timed out wait for G2H` / `enabled GuC scheduling policies: -ETIME`），只能整机断电
-5. 重启后 **BAR 回到 512MB**，而这些现象在 00:50–19:05 那段 BAR=16GB 的窗口里**没有出现**
 
-**推断**：512MB BAR 下，跨卡搬运（`bcs`）走的是最差路径（主机代理拷贝 + 1GB 小窗口反弹），
-高并发长 prompt 把它压垮 → page fault → 引擎级 reset 堆积 → GuC 死锁。
+**当时的推断（现已推翻）**：512MB BAR 下跨卡搬运（`bcs`）走最差路径，被长 prompt 压垮。
 
-**验证方法**（本次已扩到 16GB，尚未复测）：`dmesg | grep -c 'Engine reset.*bcs'` 应为 0；
-跑 12k / 32k / 100k prompt；对比 decode 是否回到 51 tok/s、长 prompt 是否不再崩。
+### 7.2 复测设计
+
+2026-10-28 21:40 两卡都扩到 **16GB**（本轮第八节）。23:15 起在同一天、同一内核、
+同一引擎版本下做对照复测，**先取干净基线**：
+
+| 基线项（23:15，刚重绑驱动、无任何进程） | 值 |
+|---|---|
+| 两卡 BAR2 | 均为 `size=16G` |
+| `Engine reset.*bcs` | **0** |
+| `page fault / Fault response` | **0** |
+| `Timed out wait for G2H / failed to enable GuC` | **0** |
+
+### 7.3 复测结果：16GB BAR 下照样崩
+
+| 组 | 条件 | 启动结果 | 请求结果 | bcs reset | page fault |
+|---|---|---|---|---|---|
+| A | 原配置，BAR=16GB | **3 次启动全部挂死**在填专家缓存那一步 | 未能跑请求 | 0 → **5** | 0 → **85** |
+| B | 加 `STRATA_NO_ARENA_THP=1` | 3 次启动 **挂 2 次、成 1 次** | 12k prompt 卡死 → SIGABRT | 5 → **8** | 85 → **120** |
+
+A 组的失败形态与 512MB 时完全一致：
+`Xe runtime: waiting for synchronous copy for 120 s` → `GPU wait exceeded the hang limit`。
+
+**结论：BAR 从 512MB 扩到 16GB 既没有消除 `bcs` 的 CAT error，也没有消除启动挂死。**
+第七节原先那条因果关系不成立，ReBAR 扩容对推理只是必要条件（否则 CPU 只能摸到 1GB 显存），
+但不是充分条件。
+
+### 7.4 上游已有同一故障（`MistVVK/XeStrata` issue #42，open）
+
+标题：`[Arc Pro B70] copy-engine CAT error and 120 s hang at engine start when the expert
+arena uses transparent huge pages (xe0.2.2-1, docker, Flash-Next IQ3_S)`
+
+环境与我们高度重合：**内核 `7.0.0-38-generic`**、引擎 `xe0.2.2-1`、模型 `Qwen3.8-Flash-Next IQ3_S`、
+`120 s synchronous copy` + `Engine memory CAT error [18]: class=bcs` + `Fault response -EBUSY`。
+
+报告者的统计（当日 19 次启动）：
+
+| 专家池是否走 THP | 启动数 | 挂死 | 正常服务 |
+|---|---|---|---|
+| `requested (madvise)` | 5 | **3** | 2 |
+| `not requested`（无空闲 2MiB 块） | 6 | 0 | 6 |
+| `skipped`（`STRATA_NO_ARENA_THP=1`） | 3 | 0 | 3 |
+
+对应到本机的引擎日志，**27 次启动全部是 `transparent huge pages requested (madvise)`，
+0 次 `NOT requested`** —— 正好落在唯一会出问题的那一档：
+
+```
+expert arena: one mapping registered for device copies in 5 pieces
+  (the GPU's largest allocation); transparent huge pages requested (madvise); no mlock
+```
+
+加 `STRATA_NO_ARENA_THP=1` 后该行变为 `transparent huge pages skipped (STRATA_NO_ARENA_THP)`。
+
+**但本机只降到 2/3 仍会挂死**，比报告者的 0/3 差。所以 THP 是一个放大因子，不是全部；
+报告者自己也标注「mechanism unknown」，并把 `iommu=pt` 列为未验证项。
+
+### 7.5 请求期卡死的新定位：提示词路径借用的显存装不下
+
+B 组第 3 次启动成功后（`session is up`，GPU0 剩 3121 MiB、GPU1 剩 690 MiB），
+一个 12k 提示词的请求在 60 秒内零进展并自杀：
+
+```
+strata serve: no progress for 60 s during a request
+  (reading the prompt (batched): layer 9 of the prompt chunk from token 0) - issue #29
+strata generate: FATAL signal SIGABRT (an abort) while reading the prompt (batched)
+```
+
+注意卡死点从 **layer 24/25（跨卡边界）变成了 layer 9（卡0 内部）**，说明跨卡不再是主因。
+
+日志自己给出了量化线索：
+
+```
+strata serve: prompt chunk auto: 8192 tokens
+strata serve: the prompt path borrows 2057 cache slots (3.69 GiB)              ← 卡0
+strata serve: layer split, CUDA1: the prompt path borrows 1837 cache slots (3.69 GiB)  ← 卡1
+VRAM free when this request began: 3121 MiB (CUDA0) / 690 MiB (CUDA1)
+```
+
+**两卡各要借 3.69 GiB，而卡1 只剩 0.67 GiB** —— 差约 3 GiB，驱动只能把显存在卡间/主机间搬，
+正是引擎那句警告说的情形：`a card the driver must move memory off of is a cause of a window
+that never finishes: a larger --vram-reserve-mib leaves room`。
+
+### 7.6 当前可行动的三个方向（均未验证）
+
+1. **给提示词路径腾显存**：缩小专家缓存（`--expert-cache` 调小，或用 `--vram-free-mib N`
+   让自动缓存按「最多 N MiB 可用」来定尺寸），使两卡各留出 ≥ 4 GiB。代价：缓存槽位减少、
+   命中率与 decode 速度下降。注意 `--vram-free-mib` 填太小会让缓存算出 0 槽位直接中止
+   （本轮此前踩过，512 就会）。
+2. **关掉 MTP**（`--spec 0`）：卡1 上草稿层占 839 MiB，能减轻一点，但单靠它不够（差 3 GiB）。
+3. **`iommu=pt`**：issue #42 列为未验证项，需要加内核参数重启。
+
+> 排查顺序建议：先做 1（唯一有量化依据的方向），若提示词能起来再回头处理启动期的 THP 挂死。
+> 两件事可能各有独立成因。
 
 ---
 
@@ -262,7 +350,7 @@ BAR 只有 512MB 时，dmesg 显示 `Small BAR device`，**CPU 可访问显存�
 | 卡1 apply | **4 秒成功**，`BAR2=16384MB`，`Control=00000e22`，`Region 2 @ 0x20000000000 [size=16G]` |
 | 卡2 apply | **4 秒成功**，`BAR2=16384MB` |
 | 副作用核查 | PCI 设备数 **197 → 197**（无丢设备），`xe` / `snd_hda_intel` 均自动回绑，`card0`/`card1` 节点回归，dmesg 无 error / timeout |
-| 未做 | 服务回起与长 prompt 复测（用户中断）；`b580-rebar.service` 仍为 disabled |
+| 后续 | **复测已完成**（23:15–23:59，结果见第七节）：16GB BAR 下仍崩，ReBAR 不是根因；`b580-rebar.service` 仍为 **disabled**，断电重启会回 512MB |
 
 **一条命令复现**（服务器端）：
 
@@ -284,6 +372,8 @@ sudo /opt/b580-bar-tool/rebar-batch.sh --check     # 期望两行 BAR2 = 16384MB
 | 4 | README 首屏「重启后必须重新 apply」 | **已修** | 表格那行由「当前大小」改为「实测结果」，加醒目提示 + 核对命令；中英两版同步并过 `check-i18n.sh` |
 | 5 | 补一节「BAR 容量对下游框架（SYCL/oneAPI、Vulkan、推理引擎）的影响」 | 待办 | 本文第七节目前只有推断，还没进 README |
 | 6 | 三个 P2 边角（`0x0403` 放行、`pci=realloc=off` 误判、`topo_window_mb` 的 `0x28`） | 待办 | 换主板 / 换卡时才咬人，但咬人很难查 |
+| 7 | 推理侧：给提示词路径腾出显存（缩 `--expert-cache` 或设 `--vram-free-mib`），让两卡各留 ≥4 GiB | 待办 | 见 7.5/7.6，目前**唯一有量化依据**的方向；代价是命中率与 decode 下降 |
+| 8 | 向上游 issue #42 补本机数据 | 待办 | 报告者样本 3/3 正常，本机跳 THP 后仍 2/3 挂死；且卡死点从 layer 24/25 移到 layer 9，两卡各需借 3.69 GiB 而卡1 仅剩 690 MiB |
 
 ---
 
