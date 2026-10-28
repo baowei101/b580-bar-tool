@@ -1,0 +1,50 @@
+########## pp512 ##########
+vulkan M4  p512   fa=0 | qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 0 pp512 3822.49 ± 15.72 
+qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 0 tg128 76.07 ± 0.43 
+
+vulkan M9  p512   fa=0 | qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 0 pp512 1858.50 ± 2.60 
+qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 0 tg128 45.57 ± 0.24 
+
+sycl   M4  p512   fa=0 | qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 0 pp512 3425.80 ± 16.87 
+qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 0 tg128 48.29 ± 0.13 
+
+sycl   M9  p512   fa=0 | qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 0 pp512 2224.67 ± 8.94 
+qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 0 tg128 53.04 ± 0.11 
+
+vulkan M4  p512   fa=1 | qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 1 pp512 3217.21 ± 7.55 
+qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 1 tg128 76.37 ± 0.10 
+
+vulkan M9  p512   fa=1 | qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 1 pp512 1815.15 ± 0.23 
+qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 1 tg128 45.35 ± 0.26 
+
+sycl   M4  p512   fa=1 | qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 1 pp512 4277.10 ± 41.54 
+qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 1 tg128 80.61 ± 0.18 
+
+sycl   M9  p512   fa=1 | qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 1 pp512 2236.15 ± 13.76 
+qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 1 tg128 53.12 ± 0.07 
+
+########## pp4096 ##########
+vulkan M4  p4096  fa=0 | qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 0 pp4096 2749.85 ± 0.98 
+qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 0 tg128 76.21 ± 0.10 
+
+vulkan M9  p4096  fa=0 | qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 0 pp4096 1856.55 ± 0.92 
+qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 0 tg128 45.45 ± 0.24 
+
+sycl   M4  p4096  fa=0 | qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 0 pp4096 2049.02 ± 1.18 
+qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 0 tg128 49.09 ± 0.17 
+
+sycl   M9  p4096  fa=0 | qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 0 pp4096 2094.65 ± 1.40 
+qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 0 tg128 52.97 ± 0.04 
+
+vulkan M4  p4096  fa=1 | qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 1 pp4096 1155.55 ± 0.04 
+qwen3 4B Q8_0 3.98 GiB 4.02 B Vulkan 99 1 tg128 75.72 ± 0.62 
+
+vulkan M9  p4096  fa=1 | qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 1 pp4096 1460.71 ± 1.09 
+qwen35 9B Q6_K 6.94 GiB 8.95 B Vulkan 99 1 tg128 45.61 ± 0.23 
+
+sycl   M4  p4096  fa=1 | qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 1 pp4096 3932.42 ± 4.67 
+qwen3 4B Q8_0 3.98 GiB 4.02 B SYCL 99 1 tg128 80.55 ± 0.07 
+
+sycl   M9  p4096  fa=1 | qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 1 pp4096 2207.82 ± 1.64 
+qwen35 9B Q6_K 6.94 GiB 8.95 B SYCL 99 1 tg128 53.13 ± 0.05 
+

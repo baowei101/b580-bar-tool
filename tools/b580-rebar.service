@@ -1,0 +1,46 @@
+[Unit]
+Description=Arc B580 Resizable BAR 扩容至 16GB（SYCL 前置，开机自愈）
+Documentation=file:///opt/b580-bar-tool/README.md
+# ── 为什么必须排到 systemd-udevd 之前 ────────────────────────────────
+# 参考日志（某台实测机，journalctl -b -o short-monotonic）：
+#   [7.920] systemd-udev-trigger.service: Starting
+#   [8.014] systemd-udevd.service: Starting
+#   [8.121] systemd-udevd.service: Started
+#   [8.289] systemd-udev-trigger.service: Finished
+#   [9.219] xe 0000:xx:00.0: [drm] Attempting to resize bar 512MiB -> 16384MiB
+#   [9.220] xe 0000:xx:00.0: BAR 2 [mem size 0x400000000]: can't assign; no space
+#
+# 两个要点：
+# 1) xe 驱动自己就想扩到 16GB，失败只因根端口窗口当时只有 520MB。
+# 2) udevd 一 Started 就从 netlink 读内核积压的 PCI add 事件，自己就会把
+#    xe 加载起来 —— 它不等 systemd-udev-trigger。所以只排到 trigger 之前
+#    仍然会和 udevd 抢同一批设备：我们 remove 锚点时它可能正在 probe，
+#    带绑定驱动做 remove 会触发内核 UAF。
+#
+# 排到 udevd 之前：内核 PCI 枚举早在 sysfs 完成（subsys_initcall，早于
+# userspace init），但 udev 一行代码没跑、xe 绝无绑定 —— 零竞争。
+# 我们的 rescan 会通过 request_module 把 xe 拉起来，那时 BAR 已分配完成，
+# xe 看到 BAR 已 >= VRAM 直接跳过 resize，一步到位。
+#
+# 前提：脚本所在路径必须与根文件系统同设备（/opt 若是独立分区，
+# 这时还没挂上，Condition 会直接 skip）。用 findmnt -no SOURCE /opt 确认。
+DefaultDependencies=no
+After=systemd-journald.socket
+Before=systemd-udevd.service systemd-udev-trigger.service
+ConditionPathExists=/opt/b580-bar-tool/rebar-autofix.sh
+ConditionPathExists=/opt/b580-bar-tool/lib/topology.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 不写死任何 BDF / 槽位 / ECAP 偏移：wrapper 通过 lib/topology.sh 现场探测，
+# 按探测出的"锚点分组"自行决定逐张 apply 还是交给 rebar-batch.sh 一次性结算。
+ExecStart=/opt/b580-bar-tool/rebar-autofix.sh
+# 事后逐张自检，尺寸不对就 wall + journal 报警
+ExecStartPost=/opt/b580-bar-tool/rebar-autofix.sh --check
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

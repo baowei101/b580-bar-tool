@@ -1,0 +1,25 @@
+[Unit]
+Description=Arc B580 ReBAR 兜底扩容（仅当开机早期那次未成功时才动）
+Documentation=file:///opt/b580-bar-tool/README.md
+# 兜底逻辑：主 unit b580-rebar.service 排在 udev 冷插拔之前，
+# 正常情况下 xe 加载时窗口已经撑开，这条不会做任何事。
+# 但如果早期因 /sys 未就绪等原因失败，这里补一次 —— 代价是走
+# unbind → 改 BAR → rescan → rebind 那条路（已实测可行，但有风险）。
+After=multi-user.target
+ConditionPathExists=/opt/b580-bar-tool/b580-bar-tool.sh
+ConditionPathExists=/opt/b580-bar-tool/rebar-autofix.sh
+ConditionPathExists=/opt/b580-bar-tool/lib/topology.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 所有目标设备都已是目标尺寸时跳过（--check 返回 0 → 取反为假 → skip）
+ExecCondition=/bin/bash -c '! /opt/b580-bar-tool/rebar-autofix.sh --check >/dev/null 2>&1'
+ExecStart=/opt/b580-bar-tool/rebar-autofix.sh
+ExecStartPost=/opt/b580-bar-tool/rebar-autofix.sh --check
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

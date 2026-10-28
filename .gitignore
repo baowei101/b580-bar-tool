@@ -1,0 +1,22 @@
+# 运行时产物
+*.log
+*.steps
+b580-bar-tool.state
+*.cfgspace.before
+rehearse.out
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+
+# 备份文件
+*.bak
+*.bak-*
+*.orig
+
+# 本地可执行副本（占位符已还原为真实地址，禁止提交）
+*.local.md
